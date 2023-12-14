@@ -1,0 +1,27 @@
+Metadata-Version: 2.1
+Name: pymen
+Version: 0.0.1
+Summary: Modular pipelines for Embodied Navigation
+Author-email: Jiaming Wang <jamie-w@nus.edu.sg>
+Maintainer-email: Jiaming Wang <jamie-w@nus.edu.sg>
+License: MIT License
+Project-URL: Homepage, https://example.com
+Project-URL: Documentation, https://readthedocs.org
+Project-URL: Repository, https://github.com/me/spam.git
+Project-URL: Issues, https://github.com/me/spam/issues
+Project-URL: Changelog, https://github.com/me/spam/blob/master/CHANGELOG.md
+Keywords: Embodied AI,Robot Navigation,Mapping
+Classifier: Programming Language :: Python :: 3.9
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+Requires-Dist: scikit-image
+Requires-Dist: torch
+Requires-Dist: torchvision
+Requires-Dist: Pillow
+Provides-Extra: visual
+Requires-Dist: cv2; extra == "visual"
+
+# Modular approach for Embodied Navigation

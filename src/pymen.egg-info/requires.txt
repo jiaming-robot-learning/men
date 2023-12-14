@@ -1,0 +1,7 @@
+scikit-image
+torch
+torchvision
+Pillow
+
+[visual]
+cv2

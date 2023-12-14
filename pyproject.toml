@@ -1,0 +1,39 @@
+[build-system]
+requires = ['setuptools>=42']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = "pymen"
+version = "0.0.1"
+dependencies = [
+    "scikit-image",
+    "torch",
+    "torchvision",
+    "Pillow",
+]
+requires-python = ">=3.8"
+authors = [
+  {name = "Jiaming Wang", email = "jamie-w@nus.edu.sg"},
+]
+maintainers = [
+  {name = "Jiaming Wang", email = "jamie-w@nus.edu.sg"}
+]
+description = "Modular pipelines for Embodied Navigation"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = {text = "MIT License"}
+keywords = ["Embodied AI", "Robot Navigation", "Mapping"]
+classifiers = [
+    "Programming Language :: Python :: 3.9",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+[project.optional-dependencies]
+vis = ["cv2"]
+
+[project.urls]
+Homepage = "https://example.com"
+Documentation = "https://readthedocs.org"
+Repository = "https://github.com/me/spam.git"
+Issues = "https://github.com/me/spam/issues"
+Changelog = "https://github.com/me/spam/blob/master/CHANGELOG.md"
+
