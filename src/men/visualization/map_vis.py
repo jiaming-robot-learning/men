@@ -21,7 +21,7 @@ from home_robot.perception.constants import (
     HM3DtoHSSD28Indoor,
 )
 from home_robot.perception.constants import PaletteIndices as PI
-from home_robot.perception.constants import RearrangeDETICCategories
+# from home_robot.perception.constants import RearrangeDETICCategories
 # from utils.visualization import (
 #     display_grayscale,
 #     display_rgb,

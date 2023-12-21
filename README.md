@@ -1,1 +1,1 @@
-# Modular approach for Embodied Navigation
+# Modular pipeline for Embodied Navigation

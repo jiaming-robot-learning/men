@@ -1,54 +1,76 @@
 
-# import math
-# import os
-# import cv2
-# import numpy as np
-# from PIL import Image
-# from torchvision import transforms
-# import torch.nn as nn
-# import torch.nn.functional as F
-# from task.util.semantic_annotation import beacon_class_list
-# from utils.vis import save_image, plot_image
-# import envs.utils.pose as pu
-# import agents.utils.visualization as vu
 
+from typing_extensions import override
 import numpy as np
 import torch
-from men.utils import depth as du
-from men.utils import rotation as ru
-from .base_map import BaseMap
+from ..utils import depth as du
+from ..utils import rotation as ru
+from .base_map import BaseMap, BaseMapArgs
     
-class OcupancyMap2D(BaseMap):
-    """
-    Grid-based 2D occupancy map.
+from matplotlib import pyplot as plt
+
+
+class OccupancyMapArgs(BaseMapArgs):
+    
+    map_pred_threshold: float   = 1.0
+    exp_pred_threshold: float   = 1.0
+    
+
+class OccupancyMap2D(BaseMap):
+    """Grid-based 2D occupancy map.
     
     """
     def __init__(self,**kwargs):
-        super().__init__(kwargs)
         
-        vr = self.vision_range
-        self.n_channels = 1 # depth only
+        self.args = OccupancyMapArgs(**kwargs)
+        super().__init__()
+        args = self.args
 
-        self.init_grid = torch.zeros(
-            self.num_processes, self.n_channels, vr, vr,
-            self.max_height - self.min_height
-        ).float().to(self.device)
+        self.map_pred_threshold = args.map_pred_threshold
+        self.exp_pred_threshold = args.exp_pred_threshold
+        self._map_channels = {
+            'occupied': 0,
+            'explored': 1,
+        }
+        
+        # map min height (20cm), ignore the ground
+        self.filtered_min_height = int(
+            20 / self.z_resolution - self.voxel_min_height
+        ) 
+        self.max_mapped_height = int(
+            (self.agent_height + 1) / self.z_resolution - self.voxel_min_height
+        )
+        
 
-        self.feat = torch.ones(
-            self.num_processes, self.n_channels,
-            self.screen_h // self.du_scale * self.screen_w // self.du_scale
-        ).float().to(self.device)
-
+    def _get_total_map_channels(self):
+        return 2
     
-    def _get_ego_map(self, 
-                     obs: np.ndarray,
-                     camera_pose: np.ndarray = None
-                     ) -> torch.Tensor:
+    @override
+    def _process_obs(self, obs: np.ndarray, **kwargs):
         """
-        Get the ego-centric map from the current observation.
+        Unnormalize the depth image.
+
         Args:
-            obs: ndarray of size (B, H, W), 
-            where B is the batch size, H is the height of the image, W is the width of the image
+            obs: (bs, h, w) depth image
+        
+        
+        """
+        # obs *= 100 # convert to cm
+        if self.normalized_depth:
+            obs = obs * ( self.max_depth - self.min_depth )
+            obs = obs + self.min_depth
+            
+        return obs
+    
+    @override
+    def _get_ego_map(self, 
+                    obs: np.ndarray,
+                    camera_pose: np.ndarray = None,
+                    **kwargs
+                    ) -> torch.Tensor:
+        """
+        Args:
+            camera_pose: (bs, 4, 4) camera pose in world frame
         """
         bs, h, w = obs.shape
         
@@ -75,25 +97,35 @@ class OcupancyMap2D(BaseMap):
         
         depth = torch.from_numpy(obs).float().to(self.device)
 
-        point_cloud_t = du.get_point_cloud_from_z_t(
+        point_cloud = du.get_point_cloud_from_z_t(
             depth, self.camera_matrix, self.device, scale=self.du_scale)
 
-        agent_view_t = du.transform_camera_view_t(
-            point_cloud_t, agent_height, tilt, self.device)
+        point_cloud_base = du.transform_camera_view_t(
+            point_cloud, agent_height, tilt, self.device)
 
-        agent_view_centered_t = du.transform_pose_t(
-            agent_view_t, self.shift_loc, self.device)
+        point_cloud_map_coords = du.transform_pose_t(
+            point_cloud_base, self.shift_loc, self.device)
 
-        max_h = self.max_height
-        min_h = self.min_height
-        z_resolution = self.z_resolution
-        vision_range = self.vision_range
+        max_h = self.voxel_max_height
+        min_h = self.voxel_min_height
+        vr = self.vision_range
+        feat_channels = 1
         
-        XYZ_cm_std = agent_view_centered_t.float()
-        XYZ_cm_std[..., :2] = (XYZ_cm_std[..., :2] / self.map_resolution)
+        self.init_grid = torch.zeros(
+            self.num_env, feat_channels, vr, vr,
+            self.voxel_max_height - self.voxel_min_height
+        ).float().to(self.device)
+
+        self.feat = torch.ones(
+            self.num_env, feat_channels,
+            self.screen_h // self.du_scale * self.screen_w // self.du_scale
+        ).float().to(self.device)
+
+        XYZ_cm_std = point_cloud_map_coords.float()
+        XYZ_cm_std[..., :2] = (XYZ_cm_std[..., :2] / self.xy_resolution)
         XYZ_cm_std[..., :2] = (XYZ_cm_std[..., :2] -
-                               vision_range // 2.) / vision_range * 2.
-        XYZ_cm_std[..., 2] = XYZ_cm_std[..., 2] / z_resolution
+                               vr // 2.) / vr * 2.
+        XYZ_cm_std[..., 2] = XYZ_cm_std[..., 2] / self.z_resolution
         XYZ_cm_std[..., 2] = (XYZ_cm_std[..., 2] -
                               (max_h + min_h) // 2.) / (max_h - min_h) * 2.
 
@@ -105,23 +137,26 @@ class OcupancyMap2D(BaseMap):
         voxels = du.splat_feat_nd(
             self.init_grid * 0., self.feat, XYZ_cm_std).transpose(2, 3)
 
-        # TODO: what is this??
-        min_z = int(25 / z_resolution - min_h)
-        max_z = int((self.agent_height + 1) / z_resolution - min_h)
+        min_z = self.filtered_min_height
+        max_z = self.max_mapped_height
+
+        # TODO: dialate?
+        # if self.dilate_obstacles:
+            
+        #     fp_map_pred =  torch.nn.functional.conv2d(
+        #         fp_map_pred, self.dialate_kernel.to(device), padding=self.dilate_size // 2
+        #     ).clamp(0, 1)
 
         agent_height_proj = voxels[..., min_z:max_z].sum(4)
         occ_map_pred = agent_height_proj[:, 0:1, :, :]
         occ_map_pred = occ_map_pred / self.map_pred_threshold
-        occ_map_pred = torch.clamp(occ_map_pred, min=0.0, max=1.0)
+        # occ_map_pred = torch.clamp(occ_map_pred, min=0.0, max=1.0)
 
-        if self.exp_channel:
-            all_height_proj = voxels.sum(4)
-            exp_map_pred = all_height_proj[:, 0:1, :, :]
-            exp_map_pred = exp_map_pred / self.exp_pred_threshold
-            exp_map_pred = torch.clamp(exp_map_pred, min=0.0, max=1.0)
+        all_height_proj = voxels.sum(4)
+        exp_map_pred = all_height_proj[:, 0:1, :, :]
+        exp_map_pred = exp_map_pred / self.exp_pred_threshold
+        # exp_map_pred = torch.clamp(exp_map_pred, min=0.0, max=1.0)
 
-            result = torch.cat((occ_map_pred, exp_map_pred), dim=1)
-        else:
-            result = occ_map_pred
+        ego_maps = torch.cat([occ_map_pred, exp_map_pred], dim=1)
             
-        return result
+        return ego_maps 

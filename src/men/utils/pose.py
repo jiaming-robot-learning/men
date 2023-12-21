@@ -131,7 +131,17 @@ def get_new_pose(pose, rel_pose_change):
     return x, y, o
 
 
-def get_new_pose_batch(pose, rel_pose_change):
+def get_new_pose_batch(pose: torch.tensor,
+                       rel_pose_change: torch.tensor
+                       ) -> torch.tensor:
+    """Get new pose from relative pose change
+    Args:
+        pose: (bs, 3) tensor of (x, y, theta), where theta is in degrees
+        rel_pose_change: (bs, 3) tensor of (dx, dy, dtheta), where dx, dy is in meter and dtheta is in rad
+        
+    Returns:
+        pose: (bs, 3) tensor of (x, y, theta), where theta is in degrees
+    """
     const = 57.29577951308232
     pose[:, 1] += rel_pose_change[:, 0] * torch.sin(
         pose[:, 2] / const

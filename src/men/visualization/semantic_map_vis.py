@@ -13,7 +13,7 @@ import numpy as np
 import skimage.morphology
 from PIL import Image
 
-import home_robot.utils.pose as pu
+from men.utils import pose as pu
 import home_robot.utils.visualization as vu
 from home_robot.perception.constants import (
     FloorplannertoMukulIndoor,
