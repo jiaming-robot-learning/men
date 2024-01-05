@@ -5,6 +5,7 @@ from men.mapping.occupancy_map import OccupancyMap2D, OccupancyMapArgs
 def occupancy_map_from_config(config):
     
     agent_config = config.habitat.simulator.agents.main_agent
+    device_id = config.habitat.simulator.habitat_sim_v0.gpu_device_id
     occ_map = OccupancyMap2D(
         min_depth = agent_config.sim_sensors.depth_sensor.min_depth,
         max_depth = agent_config.sim_sensors.depth_sensor.max_depth,
@@ -14,6 +15,7 @@ def occupancy_map_from_config(config):
         vision_range = agent_config.sim_sensors.depth_sensor.max_depth,
         hfov = agent_config.sim_sensors.depth_sensor.hfov,
         normalized_depth = agent_config.sim_sensors.depth_sensor.normalize_depth,
+        device = f'cuda:{device_id}' if device_id >= 0 else 'cpu'
     )
 
     return occ_map

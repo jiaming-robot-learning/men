@@ -8,7 +8,8 @@ from ..utils import mapping as mu
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import torch.nn.functional as F
-
+import json
+import dataclasses
 from matplotlib import pyplot as plt
 
 @dataclass
@@ -67,7 +68,8 @@ class BaseMap(ABC):
         if args.device == 'auto':
             self.device = torch.device(
                 "cuda" if torch.cuda.is_available() else "cpu")
-
+        else:
+            self.device = torch.device(args.device)
         # map parameters
         self.xy_resolution = int(args.map_resolution)
         self.z_resolution = int(args.map_resolution)
@@ -175,6 +177,19 @@ class BaseMap(ABC):
         """Get the total number of map channels."""
         pass
     
+    def save_map_args(self, save_dir: str):
+        """Save map arguments to a json file."""
+        with open(save_dir, 'w') as f:
+            json.dump(dataclasses.asdict(self.args), f)
+    
+    @staticmethod
+    def load_map_args(load_dir: str):
+        """Load map arguments from a json file."""
+        with open(load_dir, 'r') as f:
+            args = json.load(f)
+        args = BaseMapArgs(**args)
+        return args
+        
     def reset_env(self, env_idx: int):
         """Reset the map for a specific environment.
         Always reset the map at the beginning of each episode, so that the agent
