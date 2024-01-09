@@ -4,6 +4,7 @@ import torch
 import cv2
 from matplotlib import pyplot as plt
 from habitat.utils.visualizations import maps
+from skimage.draw import line_aa
 
 # color palate for mapping
 MAP_INVALID_POINT = 0
@@ -16,7 +17,7 @@ MAP_VIEW_POINT_INDICATOR = 8
 MAP_TARGET_BOUNDING_BOX = 9
 TOP_DOWN_MAP_COLORS = np.full((256, 3), 150, dtype=np.uint8)
 TOP_DOWN_MAP_COLORS[10:] = cv2.applyColorMap(
-    np.arange(246, dtype=np.uint8), cv2.COLORMAP_JET
+    np.arange(246, dtype=np.uint8), cv2.COLORMAP_TURBO
 ).squeeze(1)[:, ::-1]
 TOP_DOWN_MAP_COLORS[MAP_INVALID_POINT] = [255, 255, 255]  # White
 TOP_DOWN_MAP_COLORS[MAP_VALID_POINT] = [150, 150, 150]  # Light Grey
@@ -90,11 +91,26 @@ def eps_frame_to_local(p: np.ndarray,
     local_p = points[:,:2] @ R  - t # [num_points, 2]
     return local_p
                            
+def draw_lines(wps):
+    xs = []
+    ys = []
+    vals = []
+    for i in range(wps.shape[0]-1):
+        rr,cc, val = line_aa(int(wps[i,0]), int(wps[i,1]), int(wps[i+1,0]), int(wps[i+1,1]))
+        xs.append(rr)
+        ys.append(cc)
+        vals.append(val)
+    
+    xs = np.concatenate(xs)
+    ys = np.concatenate(ys)
+    vals = np.concatenate(vals)
+    return xs, ys, vals
+
 class OccupancyMapVis():
     
-    def __init__(self, map_args) -> None:
+    def __init__(self, map_args,grid_size=400) -> None:
         self.map_args = map_args
-        self.grid_size = 500
+        self.grid_size = grid_size
 
     def pose_to_xy_local(self, pose):
         """Convert pose to xy coordinates in the map
@@ -109,7 +125,20 @@ class OccupancyMapVis():
         p = p[1], p[0]
         return p
     
-    def pose_to_xy_global(self, pose):
+    def pose_to_xy_full_map_batch(self, pose):
+        """Convert pose to xy coordinates in the map
+        Args:
+            pose: ndarray (n, 3) pose (x, y, theta)
+            map_args: map arguments
+        """
+        map_args = self.map_args
+        p = pose[:,:2] * 100 // map_args.map_resolution + \
+            map_args.global_map_size_cm // 2 // map_args.map_resolution
+        p = p.astype(np.int32)
+        p = np.stack([p[:,1], p[:,0]], axis=1)
+        return p
+
+    def pose_to_xy_full_map(self, pose):
         """Convert pose to xy coordinates in the map
         Args:
             pose: ndarray (3,) pose (x, y, theta)
@@ -122,7 +151,7 @@ class OccupancyMapVis():
         p = p[1], p[0]
         return p
     
-    def draw_agent_global(self,
+    def draw_agent_full_map(self,
                           map: np.ndarray,
                           pose: np.ndarray,
                           ) -> np.ndarray:
@@ -177,7 +206,7 @@ class OccupancyMapVis():
         """Visualize partial map defined in agent frame
         Args:
             partial_map: ndarray (h, w) partial map (0 is free, 1 is occupied)
-            rel_path_pred: ndarray (n, 2) path, each row is (x, y) in agent frame
+            rel_path_pred: ndarray (b, n, 2) path, each row is (x, y) in agent frame
             rel_goal: ndarray (2,) goal (x, y), in agent frame
             resize: int, resize the map
             path_gt: ndarray (n, 2) path, each row is (x, y) in episodic frame
@@ -198,11 +227,15 @@ class OccupancyMapVis():
             else:
                 rel_path_pred = np.copy(rel_path_pred) 
 
-            for i in range(rel_path_pred.shape[0]):
-                p = self.pose_to_xy_local(rel_path_pred[i])
-                p = np.clip(p, 0+WAY_POINT_RADIUS, partial_map.shape[0]-WAY_POINT_RADIUS-1)
-                partial_map[p[0]-WAY_POINT_RADIUS:p[0]+WAY_POINT_RADIUS, 
-                        p[1]-WAY_POINT_RADIUS:p[1]+WAY_POINT_RADIUS] = TOP_DOWN_MAP_COLORS[MAP_SHORTEST_PATH_COLOR]
+            if rel_path_pred.ndim == 2:
+                rel_path_pred = rel_path_pred[None,...]
+                
+            for b in range(rel_path_pred.shape[0]):
+                for i in range(rel_path_pred.shape[1]):
+                    p = self.pose_to_xy_local(rel_path_pred[b,i])
+                    p = np.clip(p, 0+WAY_POINT_RADIUS, partial_map.shape[0]-WAY_POINT_RADIUS-1)
+                    partial_map[p[0]-WAY_POINT_RADIUS:p[0]+WAY_POINT_RADIUS, 
+                            p[1]-WAY_POINT_RADIUS:p[1]+WAY_POINT_RADIUS] = TOP_DOWN_MAP_COLORS[70+10*b]
         
         # draw goal
         if rel_goal is not None:
@@ -268,7 +301,7 @@ class OccupancyMapVis():
             else:
                 pose = np.copy(pose)
                 
-            rgb_map = self.draw_agent_global(rgb_map, pose)
+            rgb_map = self.draw_agent_full_map(rgb_map, pose)
 
         # overlay with exp map
         if exp_maps is not None:
@@ -285,7 +318,7 @@ class OccupancyMapVis():
 
             goal_eps_frame = local_to_eps_frame(rel_goal,pose)[0]
             rel_goal = goal_eps_frame
-            rel_goal = self.pose_to_xy_global(rel_goal)
+            rel_goal = self.pose_to_xy_full_map(rel_goal)
             rgb_map[rel_goal[0]-GOAL_RADIUS:rel_goal[0]+GOAL_RADIUS,
                 rel_goal[1]-GOAL_RADIUS:rel_goal[1]+GOAL_RADIUS] = TOP_DOWN_MAP_COLORS[MAP_TARGET_POINT_INDICATOR]
 
@@ -293,13 +326,11 @@ class OccupancyMapVis():
         # draw gt path
         if path_gt is not None and len(path_gt.shape) > 0 :
             if isinstance(path_gt, torch.Tensor):
-                
                 path_gt = path_gt.cpu().detach().clone().numpy()
 
-            for i in range(len(path_gt)):
-                p = self.pose_to_xy_global(path_gt[i])
-                rgb_map[p[0]-WAY_POINT_RADIUS:p[0]+WAY_POINT_RADIUS, 
-                        p[1]-WAY_POINT_RADIUS:p[1]+WAY_POINT_RADIUS] = TOP_DOWN_MAP_COLORS[MAP_TARGET_BOUNDING_BOX]
+            path_gt = self.pose_to_xy_full_map_batch(path_gt)
+            xs, ys, vals = draw_lines(path_gt)
+            rgb_map[xs, ys] = TOP_DOWN_MAP_COLORS[MAP_SHORTEST_PATH_COLOR]
 
         # draw path
         if rel_path_pred is not None:
@@ -308,19 +339,25 @@ class OccupancyMapVis():
             else:
                 rel_path_pred = np.copy(rel_path_pred) 
 
-            # first convert path to episodic frame
-            rel_path_pred = local_to_eps_frame(torch.from_numpy(rel_path_pred).unsqueeze(0), 
-                                    torch.from_numpy(pose).unsqueeze(0))
-            rel_path_pred = rel_path_pred.squeeze(0).numpy()
+            if rel_path_pred.ndim == 2:
+                rel_path_pred = rel_path_pred[None,...]
+            
+            for b in range(rel_path_pred.shape[0]):
+                # first convert path to episodic frame
+                rel_path_pred_b = local_to_eps_frame(rel_path_pred[b], pose)
+                xys = self.pose_to_xy_full_map_batch(rel_path_pred_b)
 
-            for i in range(rel_path_pred.shape[0]):
-                p = self.pose_to_xy_global(rel_path_pred[i])
-                rgb_map[p[0]-WAY_POINT_RADIUS:p[0]+WAY_POINT_RADIUS, 
-                        p[1]-WAY_POINT_RADIUS:p[1]+WAY_POINT_RADIUS] = TOP_DOWN_MAP_COLORS[MAP_SHORTEST_PATH_COLOR]
+                xs, ys, vals = draw_lines(xys)
+                rgb_map[xs, ys] = TOP_DOWN_MAP_COLORS[70+10*b]
+
+                # for i in range(xys.shape[0]):
+                #     p = xys[i]
+                #     rgb_map[p[0]-WAY_POINT_RADIUS:p[0]+WAY_POINT_RADIUS, 
+                #             p[1]-WAY_POINT_RADIUS:p[1]+WAY_POINT_RADIUS] = TOP_DOWN_MAP_COLORS[70+10*b]
             
         # crop a local rgb map around the agent
         local_size = 240
-        agent_xy = self.pose_to_xy_global(pose)
+        agent_xy = self.pose_to_xy_full_map(pose)
         local_map = rgb_map[max(agent_xy[0]-local_size,0):min(agent_xy[0]+local_size,960), 
                             max(agent_xy[1]-local_size,0):min(agent_xy[1]+local_size,960)]
 
@@ -374,7 +411,6 @@ class OccupancyMapVis():
 
         if partial_map is not None \
             and rel_goal is not None \
-            and gt_path is not None \
             and pose is not None:
                 
             partial_map_img = self.visualize_partial_map(partial_map, 
@@ -388,7 +424,6 @@ class OccupancyMapVis():
             
         if full_map is not None \
             and rel_goal is not None \
-            and gt_path is not None \
             and pose is not None:
             full_map_img, local_map_img = self.visualize_full_map(full_map, 
                                                                 pose=pose, 
